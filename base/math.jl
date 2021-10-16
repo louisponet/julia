@@ -383,8 +383,6 @@ log(b::Number, x::Number) = log(promote(b,x)...)
 
 # type specific math functions
 
-const libm = Base.libm_name
-
 # functions with no domain error
 """
     sinh(x)
@@ -967,7 +965,6 @@ function rem(x::T, p::T, ::RoundingMode{:Nearest}) where T<:IEEEFloat
     end
     return flipsign(x, oldx)
 end
-
 
 """
     modf(x)
