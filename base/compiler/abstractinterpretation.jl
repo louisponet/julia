@@ -83,7 +83,7 @@ function abstract_call_gf_by_type(interp::AbstractInterpreter, @nospecialize(f),
                 end
                 this_argtypes = isa(matches, MethodMatches) ? argtypes : matches.applicable_argtypes[i]
                 this_arginfo = ArgInfo(fargs, this_argtypes)
-                const_result = abstract_call_method_with_const_args(interp, result, f, this_arginfo, match, sv, false)
+                const_result = abstract_call_method_with_const_args(interp, result, f, this_arginfo, match, sv)
                 if const_result !== nothing
                     rt, const_result = const_result
                 end
@@ -120,7 +120,7 @@ function abstract_call_gf_by_type(interp::AbstractInterpreter, @nospecialize(f),
             # this is in preparation for inlining, or improving the return result
             this_argtypes = isa(matches, MethodMatches) ? argtypes : matches.applicable_argtypes[i]
             this_arginfo = ArgInfo(fargs, this_argtypes)
-            const_result = abstract_call_method_with_const_args(interp, result, f, this_arginfo, match, sv, false)
+            const_result = abstract_call_method_with_const_args(interp, result, f, this_arginfo, match, sv)
             if const_result !== nothing
                 this_rt, const_result = const_result
             end
@@ -581,7 +581,7 @@ end
 
 function abstract_call_method_with_const_args(interp::AbstractInterpreter, result::MethodCallResult,
                                               @nospecialize(f), arginfo::ArgInfo, match::MethodMatch,
-                                              sv::InferenceState, va_override::Bool)
+                                              sv::InferenceState)
     mi = maybe_get_const_prop_profitable(interp, result, f, arginfo, match, sv)
     mi === nothing && return nothing
     # try constant prop'
@@ -602,7 +602,7 @@ function abstract_call_method_with_const_args(interp::AbstractInterpreter, resul
                 return nothing
             end
         end
-        inf_result = InferenceResult(mi, (arginfo, sv), va_override)
+        inf_result = InferenceResult(mi, (arginfo, sv))
         if !any(inf_result.overridden_by_const)
             add_remark!(interp, sv, "[constprop] Could not handle constant info in matching_cache_argtypes")
             return nothing
@@ -1356,7 +1356,7 @@ function abstract_invoke(interp::AbstractInterpreter, (; fargs, argtypes)::ArgIn
     #     t, a = ti.parameters[i], argtypes′[i]
     #     argtypes′[i] = t ⊑ a ? t : a
     # end
-    const_result = abstract_call_method_with_const_args(interp, result, singleton_type(ft′), arginfo, match, sv, false)
+    const_result = abstract_call_method_with_const_args(interp, result, singleton_type(ft′), arginfo, match, sv)
     if const_result !== nothing
         rt, const_result = const_result
     end
@@ -1485,7 +1485,7 @@ function abstract_call_opaque_closure(interp::AbstractInterpreter, closure::Part
     const_result = nothing
     if !result.edgecycle
         const_result = abstract_call_method_with_const_args(interp, result, closure,
-            arginfo, match, sv, closure.isva)
+            arginfo, match, sv)
         if const_result !== nothing
             rt, const_result = const_result
         end
@@ -1501,7 +1501,7 @@ function most_general_argtypes(closure::PartialOpaque)
     if !isa(argt, DataType) || argt.name !== typename(Tuple)
         argt = Tuple
     end
-    return most_general_argtypes(closure.source, argt, closure.isva, false)
+    return most_general_argtypes(closure.source, argt, false)
 end
 
 # call where the function is any lattice element
@@ -1701,14 +1701,14 @@ function abstract_eval_statement(interp::AbstractInterpreter, @nospecialize(e), 
         end
     elseif ehead === :new_opaque_closure
         t = Union{}
-        if length(e.args) >= 5
+        if length(e.args) >= 4
             ea = e.args
             argtypes = collect_argtypes(interp, ea, vtypes, sv)
             if argtypes === nothing
                 t = Bottom
             else
                 t = _opaque_closure_tfunc(argtypes[1], argtypes[2], argtypes[3],
-                    argtypes[4], argtypes[5], argtypes[6:end], sv.linfo)
+                    argtypes[4], argtypes[5:end], sv.linfo)
                 if isa(t, PartialOpaque)
                     # Infer this now so that the specialization is available to
                     # optimization.
