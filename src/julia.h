@@ -383,6 +383,7 @@ typedef struct _jl_code_instance_t {
         // 4 interpreter
     } specptr; // private data for `jlcall entry point
     uint8_t relocatability;  // nonzero if all roots are built into sysimg or tagged by module key
+    jl_value_t *argescapes; // escape information of call arguments
 } jl_code_instance_t;
 
 // all values are callable as Functions
