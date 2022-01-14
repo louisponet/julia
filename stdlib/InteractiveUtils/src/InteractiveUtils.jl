@@ -158,6 +158,115 @@ function versioninfo(io::IO=stdout; verbose::Bool=false)
     end
 end
 
+# copied from JuliaLang/julia#43807
+# TODO: delete this function once JuliaLang/julia#43807 is merged
+function _global_julia_startup_file()
+    # If the user built us with a specific Base.SYSCONFDIR, check that location first for a startup.jl file
+    # If it is not found, then continue on to the relative path based on Sys.BINDIR
+    BINDIR = Sys.BINDIR::String
+    SYSCONFDIR = Base.SYSCONFDIR::String
+    if !isempty(SYSCONFDIR)
+        p1 = abspath(BINDIR, SYSCONFDIR, "julia", "startup.jl")
+        isfile(p1) && return p1
+    end
+    p2 = abspath(BINDIR, "..", "etc", "julia", "startup.jl")
+    isfile(p2) && return p2
+    return nothing
+end
+
+# copied from JuliaLang/julia#43807
+# TODO: delete this function once JuliaLang/julia#43807 is merged
+function _local_julia_startup_file()
+    if !isempty(DEPOT_PATH)
+        path = abspath(DEPOT_PATH[1], "config", "startup.jl")
+        isfile(path) && return path
+    end
+    return nothing
+end
+
+"""
+    diagnostics(io::IO=stdout)
+
+Print a variety of useful debugging info.
+
+!!! warning "Warning"
+    The output of this function may contain sensitive information. Before sharing the output,
+    please review the output and remove any data that should not be shared publicly.
+
+See also: [`versioninfo`](@ref).
+"""
+function diagnostics(io::IO=stdout)
+    # 1. InteractiveUtils.versioninfo(; verbose = true)
+    # 2. Threads.nthreads()
+    # 3. Information about the global startup file
+    # 4. Information about the local startup file
+    # 5. Base.julia_cmd()
+    # 6. LinearAlgebra.versioninfo()
+    # 7. Registry status
+    # 8. Project status
+    # 9. Manifest status
+    # 10. List of outdated packages in the project
+    # 11. List of outdated packages in the manifest
+    # 12. Information about the current Pkg server
+
+    # So that we don't have to add these stdlibs as dependencies of InteractiveUtils
+    downloads_module     = Base.require(Base, :Downloads)
+    linearalgebra_module = Base.require(Base, :LinearAlgebra)
+    pkg_module           = Base.require(Base, :Pkg)
+
+    versioninfo(io; verbose=true) # InteractiveUtils.versioninfo
+    println(io, "Miscellaneous Info:")
+    println(io, "  Threads.nthreads(): ", Base.Threads.nthreads())
+    for pair in [
+            ("Global" => _global_julia_startup_file()),
+            ("Local" => _local_julia_startup_file()),
+        ]
+        filename = pair[2]
+        if filename === nothing
+            description = "does not exist"
+        else
+            str = strip(read(filename, String))
+            expr = Base.Meta.parse(str; raise=false)
+            if expr === nothing
+                description = "does not contain any code"
+            else
+                description = "exists and contains code ($(filename))"
+            end
+        end
+        println(io, "  $(pair[1]) startup file: ", description)
+    end
+    println(io, "  Base.julia_cmd(): ", Base.julia_cmd())
+    linearalgebra_module.versioninfo(io)
+    pkg_module.status(; io, mode=pkg_module.PKGMODE_PROJECT)
+    pkg_module.status(; io, mode=pkg_module.PKGMODE_MANIFEST)
+    println(io, "Outdated Packages:")
+    pkg_module.status(; io, outdated=true, mode=pkg_module.PKGMODE_PROJECT)
+    pkg_module.status(; io, outdated=true, mode=pkg_module.PKGMODE_MANIFEST)
+    pkg_module.Registry.status(io)
+
+    println(io, "Pkg Server Info:")
+    pkg_server = pkg_module.pkg_server()
+    println(io, "  Pkg.pkg_server(): ", pkg_server)
+    if pkg_server !== nothing
+        pkg_server_url = convert(String, strip(pkg_server))::String
+        if !isempty(pkg_server_url)
+            debug = (type, message) -> begin
+                s = strip(message)
+                if !isempty(s)
+                    println(io, "  ", s)
+                end
+            end
+            downloads_module.request(
+                pkg_server_url;
+                debug,
+                timeout = 5,
+                throw = false,
+            );
+        end
+    end
+
+    return nothing
+end
 
 function type_close_enough(@nospecialize(x), @nospecialize(t))
     x == t && return true
