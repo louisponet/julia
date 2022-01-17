@@ -243,7 +243,6 @@ function diagnostics(io::IO=stdout)
     pkg_module.status(; io, outdated=true, mode=pkg_module.PKGMODE_PROJECT)
     pkg_module.status(; io, outdated=true, mode=pkg_module.PKGMODE_MANIFEST)
     pkg_module.Registry.status(io)
-
     println(io, "Pkg Server Info:")
     pkg_server = pkg_module.pkg_server()
     println(io, "  Pkg.pkg_server(): ", pkg_server)
@@ -259,7 +258,7 @@ function diagnostics(io::IO=stdout)
             downloads_module.request(
                 pkg_server_url;
                 debug,
-                timeout = 5,
+                timeout = 5, # 5 seconds
                 throw = false,
             );
         end
