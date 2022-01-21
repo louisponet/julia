@@ -233,7 +233,7 @@ function run_passes_with_ea(interp::EscapeAnalyzer, ci::CodeInfo, sv::Optimizati
         interp.state = state
         interp.linfo = sv.linfo
     end
-    @timeit "SROA"      ir = sroa_pass!(ir)
+    @timeit "SROA"      ir = sroa_pass!(ir, nargs, getter)
     @timeit "ADCE"      ir = adce_pass!(ir)
     @timeit "type lift" ir = type_lift_pass!(ir)
     @timeit "compact 3" ir = compact!(ir)
