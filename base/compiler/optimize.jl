@@ -97,7 +97,7 @@ function stmt_effect_free end # imported by EscapeAnalysis
 function alloc_array_ndims end # imported by EscapeAnalysis
 include("compiler/ssair/driver.jl")
 using .EscapeAnalysis
-import .EscapeAnalysis: EscapeState, ArgEscapeInfo
+import .EscapeAnalysis: EscapeState, ArgEscapeInfo, is_ipo_profitable
 
 """
     cache_escapes!(caller::InferenceResult, estate::EscapeState)
@@ -543,8 +543,12 @@ function run_passes(ci::CodeInfo, sv::OptimizationState, caller::InferenceResult
     @timeit "compact 1" ir = compact!(ir)
     nargs = let def = sv.linfo.def; isa(def, Method) ? Int(def.nargs) : 0; end
     getter = getargescapes(sv.inlining.mi_cache)
-    @timeit "IPO EA"    state = analyze_escapes(ir, nargs, false, getter)
-    cache_escapes!(caller, state)
+    if is_ipo_profitable(ir, nargs)
+        @timeit "IPO EA" begin
+            state = analyze_escapes(ir, nargs, false, getter)
+            cache_escapes!(caller, state)
+        end
+    end
     @timeit "Inlining"  ir = ssa_inlining_pass!(ir, ir.linetable, sv.inlining, ci.propagate_inbounds)
     # @timeit "verify 2" verify_ir(ir)
     @timeit "compact 2" ir = compact!(ir)

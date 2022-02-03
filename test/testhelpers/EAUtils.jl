@@ -74,7 +74,7 @@ import .CC:
     InferenceResult, OptimizationState, IRCode, copy as cccopy,
     @timeit, convert_to_ircode, slot2reg, compact!, ssa_inlining_pass!, sroa_pass!,
     adce_pass!, type_lift_pass!, JLOptions, verify_ir, verify_linetable
-import .EA: analyze_escapes, ArgEscapeInfo, EscapeInfo, EscapeState
+import .EA: analyze_escapes, ArgEscapeInfo, EscapeInfo, EscapeState, is_ipo_profitable
 
 # when working outside of Core.Compiler,
 # cache entire escape state for later inspection and debugging
@@ -199,13 +199,17 @@ function run_passes_with_ea(interp::EscapeAnalyzer, ci::CodeInfo, sv::Optimizati
     nargs = let def = sv.linfo.def; isa(def, Method) ? Int(def.nargs) : 0; end
     getter = getargescapes(sv.inlining.mi_cache)
     local state
-    try
-        @timeit "[IPO EA]" state = analyze_escapes(ir, nargs, false, getter)
-        cache_escapes!(interp, caller, state, cccopy(ir))
-    catch err
-        @error "error happened within [IPO EA], insepct `Main.ir` and `Main.nargs`"
-        @eval Main (ir = $ir; nargs = $nargs)
-        rethrow(err)
+    if is_ipo_profitable(ir, nargs) || caller.linfo.specTypes === interp.entry_tt
+        try
+            @timeit "[IPO EA]" begin
+                state = analyze_escapes(ir, nargs, false, getter)
+                cache_escapes!(interp, caller, state, cccopy(ir))
+            end
+        catch err
+            @error "error happened within [IPO EA], insepct `Main.ir` and `Main.nargs`"
+            @eval Main (ir = $ir; nargs = $nargs)
+            rethrow(err)
+        end
     end
     if caller.linfo.specTypes === interp.entry_tt && !interp.optimize
         # return back the result
