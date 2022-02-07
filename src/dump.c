@@ -120,6 +120,8 @@ static jl_typename_t *jl_idtable_typename = NULL;
 static jl_value_t *jl_bigint_type = NULL;
 static int gmp_limb_size = 0;
 
+static jl_array_t *serialization_stack = NULL;
+
 static void write_uint64(ios_t *s, uint64_t i) JL_NOTSAFEPOINT
 {
     ios_write(s, (char*)&i, 8);
@@ -575,6 +577,7 @@ static void jl_serialize_code_instance(jl_serializer_state *s, jl_code_instance_
             jl_error("Cannot serialize CodeInstance with PartialOpaque rettype");
         }
     }
+    jl_array_ptr_1d_push(serialization_stack, codeinst);
 
     write_uint8(s->s, TAG_CODE_INSTANCE);
     write_uint8(s->s, flags);
@@ -591,6 +594,7 @@ static void jl_serialize_code_instance(jl_serializer_state *s, jl_code_instance_
         jl_serialize_value(s, jl_any_type);
     }
     write_uint8(s->s, codeinst->relocatability);
+    jl_array_del_end(serialization_stack, 1);
     jl_serialize_code_instance(s, codeinst->next, skip_partial_opaque, internal);
 }
 
@@ -721,6 +725,7 @@ static void jl_serialize_value_(jl_serializer_state *s, jl_value_t *v, int as_li
         jl_serialize_value(s, ((jl_tvar_t*)v)->ub);
     }
     else if (jl_is_method(v)) {
+        jl_array_ptr_1d_push(serialization_stack, v);
         write_uint8(s->s, TAG_METHOD);
         jl_method_t *m = (jl_method_t*)v;
         uint64_t key = 0;
@@ -774,9 +779,14 @@ static void jl_serialize_value_(jl_serializer_state *s, jl_value_t *v, int as_li
                 }
                 // this visits every item, if it becomes a bottlneck we could hop blocks
                 while (rle_iter_increment(&rootiter, nroots, rletable, nblocks2))
-                    if (rootiter.key == key)
-                        jl_serialize_value(s, jl_array_ptr_ref(m->roots, rootiter.i));
+                    if (rootiter.key == key) {
+                        jl_value_t *newroot = jl_array_ptr_ref(m->roots, rootiter.i);
+                        jl_array_ptr_1d_push(serialization_stack, jl_svec2(jl_box_int32(rootiter.i), newroot));
+                        jl_serialize_value(s, newroot);
+                        jl_array_del_end(serialization_stack, 1);
+                    }
             }
+            jl_array_del_end(serialization_stack, 1);
             return;
         }
         jl_serialize_value(s, m->specializations);
@@ -802,8 +812,10 @@ static void jl_serialize_value_(jl_serializer_state *s, jl_value_t *v, int as_li
         jl_serialize_value(s, (jl_value_t*)m->generator);
         jl_serialize_value(s, (jl_value_t*)m->invokes);
         jl_serialize_value(s, (jl_value_t*)m->recursion_relation);
+        jl_array_del_end(serialization_stack, 1);
     }
     else if (jl_is_method_instance(v)) {
+        jl_array_ptr_1d_push(serialization_stack, v);
         jl_method_instance_t *mi = (jl_method_instance_t*)v;
         if (jl_is_method(mi->def.value) && mi->def.method->is_for_opaque_closure) {
             jl_error("unimplemented: serialization of MethodInstances for OpaqueClosure");
@@ -827,8 +839,10 @@ static void jl_serialize_value_(jl_serializer_state *s, jl_value_t *v, int as_li
             jl_serialize_value(s, (jl_value_t*)mi->uninferred);
         jl_serialize_value(s, (jl_value_t*)mi->specTypes);
         jl_serialize_value(s, mi->def.value);
-        if (!internal)
+        if (!internal) {
+            jl_array_del_end(serialization_stack, 1);
             return;
+        }
         jl_serialize_value(s, (jl_value_t*)mi->sparam_vals);
         jl_array_t *backedges = mi->backedges;
         if (backedges) {
@@ -850,6 +864,7 @@ static void jl_serialize_value_(jl_serializer_state *s, jl_value_t *v, int as_li
         jl_serialize_value(s, (jl_value_t*)backedges);
         jl_serialize_value(s, (jl_value_t*)NULL); //callbacks
         jl_serialize_code_instance(s, mi->cache, 1, internal);
+        jl_array_del_end(serialization_stack, 1);
     }
     else if (jl_is_code_instance(v)) {
         jl_serialize_code_instance(s, (jl_code_instance_t*)v, 0, 2);
@@ -974,6 +989,9 @@ static void jl_serialize_value_(jl_serializer_state *s, jl_value_t *v, int as_li
         }
 
         if (jl_is_foreign_type(t)) {
+            jl_printf(JL_STDERR, "Serialization error encountered. Here is a stack of Methods, MethodInstances, CodeInstances, and method roots (as an svec(index, root)):\n");
+            jl_(serialization_stack);
+            jl_printf(JL_STDERR, "Current item is at end.\n");
             jl_error("Cannot serialize instances of foreign datatypes");
         }
 
@@ -2541,6 +2559,7 @@ JL_DLLEXPORT int jl_save_incremental(const char *fname, jl_array_t *worklist)
     jl_array_t *extext_methods = jl_alloc_vec_any(0);  // [method1, simplesig1, ...], worklist-owned "extending external" methods added to functions owned by modules outside the worklist
     jl_array_t *ext_targets = jl_alloc_vec_any(0);     // [callee1, matches1, ...] non-worklist callees of worklist-owned methods
     jl_array_t *edges = jl_alloc_vec_any(0);           // [caller1, ext_targets_indexes1, ...] for worklist-owned methods calling external methods
+    serialization_stack = jl_alloc_vec_any(0);
 
     int n_ext_mis = queue_external_mis(newly_inferred);
 
@@ -2575,6 +2594,7 @@ JL_DLLEXPORT int jl_save_incremental(const char *fname, jl_array_t *worklist)
     jl_serialize_value(&s, ext_targets);
     jl_finalize_serializer(&s);
     serializer_worklist = NULL;
+    serialization_stack = NULL;
 
     jl_gc_enable(en);
     htable_reset(&edges_map, 0);
